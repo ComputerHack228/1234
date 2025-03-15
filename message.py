@@ -1,71 +1,59 @@
-import socket
+from pywebio import start_server
+from pywebio.input import *
+from pywebio.output import *
+from pywebio.session import *
+from pywebio.pin import *
+from pywebio.platform.flask import webio_view
+from flask import Flask
 import threading
 
-def handle_client(client_socket, address):
-    print(f"New connection from {address}")
+# Global variables to store messages and users
+messages = []
+users = set()
+
+app = Flask(__name__)
+
+def chat():
+    global messages, users
+
+    # Get the user's name
+    user = input("Enter your name to join the chat", required=True)
+    users.add(user)
+    put_markdown(f"### Welcome to the chat, {user}!")
+
+    # Display the chat history
+    for msg in messages:
+        put_text(msg)
+
+    # Input field for new messages
     while True:
-        try:
-            message = client_socket.recv(1024).decode('utf-8')
-            if not message:
-                break
-            print(f"{address}: {message}")
-            broadcast(message, client_socket)
-        except ConnectionResetError:
-            break
-    print(f"Connection from {address} closed.")
-    clients.remove(client_socket)
-    client_socket.close()
+        msg = input("Type your message", required=True)
+        messages.append(f"{user}: {msg}")
+        
+        # Update the chat for all users
+        for u in users:
+            if u != user:
+                run_js(f'addMessage("{user}: {msg}")', session_id=u)
 
-def broadcast(message, sender_socket):
-    for client in clients:
-        if client != sender_socket:
-            try:
-                client.send(message.encode('utf-8'))
-            except:
-                clients.remove(client)
+        # Display the message in the current session
+        put_text(f"{user}: {msg}")
 
-def start_server():
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.bind(('0.0.0.0', 5555))  # Use public IP for external connections
-    server.listen(5)
-    print("Server started on port 5555...")
-    
-    while True:
-        client_socket, addr = server.accept()
-        clients.append(client_socket)
-        client_handler = threading.Thread(target=handle_client, args=(client_socket, addr))
-        client_handler.start()
+def add_message_js():
+    return """
+    <script>
+    function addMessage(msg) {
+        var p = document.createElement("p");
+        p.textContent = msg;
+        document.body.appendChild(p);
+    }
+    </script>
+    """
 
-def start_client(server_ip):
-    client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    client.connect((server_ip, 5555))
-    
-    def receive_messages():
-        while True:
-            try:
-                message = client.recv(1024).decode('utf-8')
-                print(message)
-            except ConnectionResetError:
-                break
-    
-    thread = threading.Thread(target=receive_messages, daemon=True)
-    thread.start()
-    
-    while True:
-        message = input("You: ")
-        if message.lower() == "exit":
-            break
-        client.send(message.encode('utf-8'))
-    client.close()
+def main():
+    put_html(add_message_js())
+    chat()
 
-clients = []
+app.add_url_rule('/', 'webio_view', webio_view(main), methods=['GET', 'POST'])
 
-if __name__ == "__main__":
-    choice = input("Start as (server/client): ").strip().lower()
-    if choice == "server":
-        start_server()
-    elif choice == "client":
-        server_ip = input("Enter server IP: ").strip()
-        start_client(server_ip)
-    else:
-        print("Invalid choice. Exiting.")
+if __name__ == '__main__':
+    start_server(main, port=8080, debug=True)
